@@ -15,6 +15,7 @@ export type NavIconName =
   | "patients"
   | "profile"
   | "logout"
+  | "ai"
   | "chevron-left"
   | "chevron-right";
 
@@ -33,6 +34,7 @@ export const SIDE_NAV_ITEMS: SideNavItem[] = [
   { id: "schedule", label: "Schedule", icon: "schedule", href: "/schedule" },
   { id: "visit-history", label: "Visit history", icon: "history", href: "/visit-history" },
   { id: "patients", label: "Patients", icon: "patients", href: "/patients" },
+  { id: "ai-helper", label: "AI helper", icon: "ai", href: "/ai-helper" },
   { id: "profile", label: "Profile", icon: "profile", href: "/profile" },
 ];
 
@@ -47,6 +49,17 @@ const ICON_PATHS: Record<NavIconName, string[]> = {
     "M15 17h5l-1.4-1.4A2 2 0 0118 14.2V11a6 6 0 10-12 0v3.2a2 2 0 01-.6 1.4L4 17h5",
     "M9 17a3 3 0 006 0",
   ],
+  ai: [
+  "M12 3v3",
+  "M12 18v3",
+  "M3 12h3",
+  "M18 12h3",
+  "M12 8a4 4 0 100 8 4 4 0 000-8z",
+  "M6.3 6.3l2.1 2.1",
+  "M15.6 15.6l2.1 2.1",
+  "M6.3 17.7l2.1-2.1",
+  "M15.6 8.4l2.1-2.1",
+],
   schedule: [
     "M8 2v4",
     "M16 2v4",

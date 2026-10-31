@@ -1,81 +1,42 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import type { User } from "firebase/auth";
+import { useRouter } from "next/navigation";
 import { signOutUser } from "../../lib/firebase/auth/service";
 import type { WorkerProfile } from "../../types/auth";
+import NewVisitModal from "../forms/NewVisitModal";
+import AddRecordModal from "../forms/AddRecordModal";
+import ReportModal from "../forms/ReportModal";
+import ScanIdModal from "../forms/ScanIdModal";
+import { useVisitsForDay } from "../../hooks/useVisits";
+import { displayStatus, formatTime, type DisplayStatus } from "../../lib/firebase/db/types";
 
 // ---------------------------------------------------------------------------
-// Dummy data for the demo. Not real patient records.
-// Replace these constants with real data when wiring up the backend.
+// Static config
 // ---------------------------------------------------------------------------
 
 type Tone = "indigo" | "emerald" | "amber" | "rose";
 
-const TONES: Record<
-  Tone,
-  { bg: string; text: string; bar: string; stroke: string; ring: string }
-> = {
-  indigo: {
-    bg: "bg-indigo-50",
-    text: "text-indigo-600",
-    bar: "bg-indigo-500",
-    stroke: "#6366f1",
-    ring: "#6366f1",
-  },
-  emerald: {
-    bg: "bg-emerald-50",
-    text: "text-emerald-600",
-    bar: "bg-emerald-500",
-    stroke: "#10b981",
-    ring: "#10b981",
-  },
-  amber: {
-    bg: "bg-amber-50",
-    text: "text-amber-600",
-    bar: "bg-amber-500",
-    stroke: "#f59e0b",
-    ring: "#f59e0b",
-  },
-  rose: {
-    bg: "bg-rose-50",
-    text: "text-rose-600",
-    bar: "bg-rose-500",
-    stroke: "#f43f5e",
-    ring: "#f43f5e",
-  },
+const TONES: Record<Tone, { bg: string; text: string; bar: string; stroke: string }> = {
+  indigo: { bg: "bg-indigo-50", text: "text-indigo-600", bar: "bg-indigo-500", stroke: "#6366f1" },
+  emerald: { bg: "bg-emerald-50", text: "text-emerald-600", bar: "bg-emerald-500", stroke: "#10b981" },
+  amber: { bg: "bg-amber-50", text: "text-amber-600", bar: "bg-amber-500", stroke: "#f59e0b" },
+  rose: { bg: "bg-rose-50", text: "text-rose-600", bar: "bg-rose-500", stroke: "#f43f5e" },
 };
 
-const STATS: {
-  label: string;
-  value: number;
-  change: number;
-  tone: Tone;
-  trend: number[];
-}[] = [
-  { label: "Visits today", value: 4, change: 2, tone: "indigo", trend: [2, 3, 2, 5, 4, 6, 4] },
-  { label: "Pending records", value: 2, change: -1, tone: "amber", trend: [5, 4, 4, 3, 3, 2, 2] },
-  { label: "ANC visits due", value: 1, change: 0, tone: "rose", trend: [1, 2, 1, 1, 2, 1, 1] },
-  { label: "Immunisations due", value: 3, change: 1, tone: "emerald", trend: [1, 2, 2, 3, 2, 3, 3] },
-];
+const STATUS_STYLE: Record<DisplayStatus, { label: string; chip: string; dot: string }> = {
+  completed: { label: "Completed", chip: "bg-emerald-50 text-emerald-700", dot: "bg-emerald-500" },
+  scheduled: { label: "Scheduled", chip: "bg-indigo-50 text-indigo-700", dot: "bg-indigo-500" },
+  overdue: { label: "Overdue", chip: "bg-amber-50 text-amber-700", dot: "bg-amber-500" },
+  missed: { label: "Missed", chip: "bg-rose-50 text-rose-700", dot: "bg-rose-500" },
+};
 
-const WEEK = [
-  { day: "Mon", visits: 5, target: 6 },
-  { day: "Tue", visits: 7, target: 6 },
-  { day: "Wed", visits: 4, target: 6 },
-  { day: "Thu", visits: 6, target: 6 },
-  { day: "Fri", visits: 8, target: 6 },
-  { day: "Sat", visits: 3, target: 4 },
-  { day: "Sun", visits: 0, target: 0 },
-];
-
-const MONTH = [
-  { day: "Wk 1", visits: 28, target: 30 },
-  { day: "Wk 2", visits: 33, target: 30 },
-  { day: "Wk 3", visits: 25, target: 30 },
-  { day: "Wk 4", visits: 31, target: 30 },
-];
+// Trend and coverage stay dummy until their services exist.
+const TREND: Record<"Visits" | "Target", number[]> = {
+  Visits: [2, 3, 2, 5, 4, 6, 4],
+  Target: [1, 2, 2, 3, 2, 3, 3],
+};
 
 const COVERAGE = [
   { label: "Household visits", done: 62, total: 80, tone: "indigo" as Tone },
@@ -84,51 +45,23 @@ const COVERAGE = [
   { label: "Records synced", done: 29, total: 35, tone: "amber" as Tone },
 ];
 
-type ScheduleStatus = "done" | "next" | "upcoming" | "overdue";
-
-const SCHEDULE: {
-  time: string;
-  name: string;
-  type: string;
-  village: string;
-  status: ScheduleStatus;
-}[] = [
-  { time: "9:30 AM", name: "Demo Patient A", type: "Home visit", village: "Ward 4", status: "done" },
-  { time: "11:00 AM", name: "Demo Patient B", type: "ANC check-up", village: "Ward 4", status: "done" },
-  { time: "2:15 PM", name: "Demo Patient C", type: "Immunisation", village: "Ward 7", status: "next" },
-  { time: "3:30 PM", name: "Demo Patient D", type: "Growth monitoring", village: "Ward 7", status: "upcoming" },
-  { time: "4:45 PM", name: "Demo Patient E", type: "Follow-up visit", village: "Ward 9", status: "overdue" },
-];
-
-const STATUS_STYLE: Record<ScheduleStatus, { label: string; chip: string; dot: string }> = {
-  done: { label: "Done", chip: "bg-emerald-50 text-emerald-700", dot: "bg-emerald-500" },
-  next: { label: "Next", chip: "bg-indigo-50 text-indigo-700", dot: "bg-indigo-500" },
-  upcoming: { label: "Upcoming", chip: "bg-gray-100 text-gray-600", dot: "bg-gray-400" },
-  overdue: { label: "Overdue", chip: "bg-rose-50 text-rose-700", dot: "bg-rose-500" },
-};
-
 const ALERTS: { title: string; detail: string; tone: Tone }[] = [
-  { title: "3 immunisations due this week", detail: "Ward 7 · Demo Batch 12", tone: "amber" },
+  { title: "3 immunisations due this week", detail: "Ward 7 · Demo batch 12", tone: "amber" },
   { title: "1 ANC visit overdue", detail: "Demo Patient E · 2 days late", tone: "rose" },
   { title: "Records pending sync", detail: "2 visits from yesterday", tone: "indigo" },
 ];
 
 const QUICK_ACTIONS = [
-  { label: "New visit", icon: "+" },
-  { label: "Scan ID", icon: "⌗" },
-  { label: "Add record", icon: "✎" },
-  { label: "Report", icon: "▤" },
-];
+  { label: "New visit", icon: "+", key: "visit" },
+  { label: "Scan ID", icon: "⌗", key: "scan" },
+  { label: "Add record", icon: "✎", key: "record" },
+  { label: "Report", icon: "▤", key: "report" },
+] as const;
 
-const NAV = [
-  { label: "Home", active: true },
-  { label: "Patients", active: false },
-  { label: "Schedule", active: false },
-  { label: "Profile", active: false },
-];
+type ModalKey = (typeof QUICK_ACTIONS)[number]["key"];
 
 // ---------------------------------------------------------------------------
-// Small presentational helpers
+// Presentational helpers
 // ---------------------------------------------------------------------------
 
 function Sparkline({ data, stroke }: { data: number[]; stroke: string }) {
@@ -158,17 +91,7 @@ function Sparkline({ data, stroke }: { data: number[]; stroke: string }) {
   );
 }
 
-function ProgressRing({
-  value,
-  max,
-  size = 120,
-  strokeWidth = 12,
-}: {
-  value: number;
-  max: number;
-  size?: number;
-  strokeWidth?: number;
-}) {
+function ProgressRing({ value, max, size = 120, strokeWidth = 12 }: { value: number; max: number; size?: number; strokeWidth?: number }) {
   const radius = (size - strokeWidth) / 2;
   const circumference = 2 * Math.PI * radius;
   const pct = max === 0 ? 0 : Math.min(value / max, 1);
@@ -176,14 +99,7 @@ function ProgressRing({
   return (
     <div className="relative shrink-0" style={{ width: size, height: size }}>
       <svg width={size} height={size} className="-rotate-90">
-        <circle
-          cx={size / 2}
-          cy={size / 2}
-          r={radius}
-          stroke="#e5e7eb"
-          strokeWidth={strokeWidth}
-          fill="none"
-        />
+        <circle cx={size / 2} cy={size / 2} r={radius} stroke="#e5e7eb" strokeWidth={strokeWidth} fill="none" />
         <circle
           cx={size / 2}
           cy={size / 2}
@@ -211,10 +127,33 @@ function ProgressBar({ value, total, tone }: { value: number; total: number; ton
   const pct = total === 0 ? 0 : Math.round((value / total) * 100);
   return (
     <div className="h-2 w-full overflow-hidden rounded-full bg-gray-100">
-      <div
-        className={`h-full rounded-full ${TONES[tone].bar} transition-all duration-700`}
-        style={{ width: `${pct}%` }}
-      />
+      <div className={`h-full rounded-full ${TONES[tone].bar} transition-all duration-700`} style={{ width: `${pct}%` }} />
+    </div>
+  );
+}
+
+function TrendChart({ visits, target }: { visits: number[]; target: number[] }) {
+  const max = Math.max(...visits, ...target, 1);
+  const days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+  return (
+    <div className="flex h-48 items-end gap-2 sm:gap-4">
+      {visits.map((v, i) => (
+        <div key={days[i]} className="flex h-full flex-1 flex-col items-center gap-2">
+          <div className="relative flex w-full flex-1 items-end justify-center">
+            <div
+              className="absolute bottom-0 w-full max-w-[36px] rounded-t-md border-2 border-dashed border-gray-300"
+              style={{ height: `${(target[i] / max) * 100}%` }}
+              aria-hidden
+            />
+            <div
+              className="relative w-full max-w-[36px] rounded-t-md bg-indigo-500 transition-all duration-500"
+              style={{ height: `${(v / max) * 100}%` }}
+              title={`${v} visits`}
+            />
+          </div>
+          <span className="text-xs text-gray-500">{days[i]}</span>
+        </div>
+      ))}
     </div>
   );
 }
@@ -224,12 +163,12 @@ function initialsOf(name: string) {
     .split(" ")
     .filter(Boolean)
     .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase())
+    .map((p) => p[0]?.toUpperCase())
     .join("");
 }
 
 // ---------------------------------------------------------------------------
-// Main component
+// Dashboard
 // ---------------------------------------------------------------------------
 
 interface Props {
@@ -239,23 +178,30 @@ interface Props {
 
 export default function WorkerDashboard({ user, profile }: Props) {
   const router = useRouter();
-  const [period, setPeriod] = useState<"week" | "month">("week");
+  const [modal, setModal] = useState<ModalKey | null>(null);
+  const closeModal = useCallback(() => setModal(null), []);
+
+  const { visits, loading, error } = useVisitsForDay(new Date());
+  const now = new Date();
+  const statuses = visits.map((v) => displayStatus(v, now));
+  const countOf = (s: DisplayStatus) => statuses.filter((x) => x === s).length;
+
+  const completedToday = countOf("completed");
+  const todayTotal = visits.length;
+  const openCount = countOf("scheduled") + countOf("overdue");
+  const nextVisit = visits.find((v) => ["scheduled", "overdue"].includes(displayStatus(v, now)));
+
+  const SUMMARY = [
+    { label: "Visits today", value: todayTotal, change: 0, tone: "indigo" as Tone, trend: [2, 3, 2, 5, 4, 6, 4] },
+    { label: "Open visits", value: openCount, change: 0, tone: "amber" as Tone, trend: [5, 4, 4, 3, 3, 2, 2] },
+    { label: "Completed", value: completedToday, change: 0, tone: "emerald" as Tone, trend: [1, 2, 2, 3, 2, 3, 3] },
+    { label: "Missed", value: countOf("missed"), change: 0, tone: "rose" as Tone, trend: [1, 2, 1, 1, 2, 1, 1] },
+  ];
 
   const name = profile?.displayName ?? user.displayName ?? "ASHA worker";
   const method = profile?.provider === "google" ? "Google" : "ASHA ID";
   const role = profile?.role ?? "asha";
-
-  const chartData = period === "week" ? WEEK : MONTH;
-  const chartMax = Math.max(...chartData.map((d) => Math.max(d.visits, d.target)), 1);
-  const totalVisits = chartData.reduce((sum, d) => sum + d.visits, 0);
-  const completedToday = SCHEDULE.filter((s) => s.status === "done").length;
-  const todayTotal = SCHEDULE.length;
-
-  const today = new Date().toLocaleDateString("en-IN", {
-    weekday: "long",
-    day: "numeric",
-    month: "short",
-  });
+  const today = new Date().toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "short" });
 
   async function handleSignOut() {
     await signOutUser();
@@ -263,7 +209,7 @@ export default function WorkerDashboard({ user, profile }: Props) {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-28 md:pb-10">
+    <div className="pb-28 md:pb-10">
       {/* Top bar */}
       <header className="sticky top-0 z-20 border-b border-gray-200 bg-white/90 backdrop-blur">
         <div className="mx-auto flex max-w-5xl items-center justify-between gap-3 px-4 py-3">
@@ -273,12 +219,11 @@ export default function WorkerDashboard({ user, profile }: Props) {
             </div>
             <div className="min-w-0">
               <p className="text-xs text-gray-500">{today}</p>
-              <h1 className="truncate text-base font-semibold text-gray-900 sm:text-lg">
-                Welcome, {name}
-              </h1>
+              <h1 className="truncate text-base font-semibold text-gray-900 sm:text-lg">Welcome, {name}</h1>
             </div>
           </div>
           <button
+            type="button"
             onClick={handleSignOut}
             className="shrink-0 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 active:scale-95"
           >
@@ -288,7 +233,6 @@ export default function WorkerDashboard({ user, profile }: Props) {
       </header>
 
       <main className="mx-auto max-w-5xl space-y-6 p-4 sm:p-6">
-        {/* Profile strip */}
         <p className="text-xs text-gray-500 sm:text-sm">
           Role: <span className="font-medium text-gray-700">{role}</span> · Signed in with{" "}
           <span className="font-medium text-gray-700">{method}</span>
@@ -299,22 +243,25 @@ export default function WorkerDashboard({ user, profile }: Props) {
           )}
         </p>
 
-        {/* Hero: today's progress + next visit */}
+        {error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p>}
+
+        {/* Hero */}
         <section className="grid gap-4 md:grid-cols-5">
           <div className="flex flex-col items-center gap-4 rounded-2xl bg-white p-5 shadow-sm ring-1 ring-gray-200 md:col-span-2 md:flex-row md:items-center md:gap-6">
             <ProgressRing value={completedToday} max={todayTotal} />
             <div className="w-full space-y-2 text-center md:text-left">
               <h2 className="font-semibold text-gray-900">Today&apos;s progress</h2>
               <p className="text-sm text-gray-500">
-                {completedToday} of {todayTotal} visits completed
+                {loading ? "Loading…" : `${completedToday} of ${todayTotal} visits completed`}
               </p>
               <div className="flex flex-wrap justify-center gap-2 md:justify-start">
-                <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700">
-                  On track
-                </span>
-                <span className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700">
-                  1 overdue
-                </span>
+                {countOf("overdue") === 0 ? (
+                  <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700">On track</span>
+                ) : (
+                  <span className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700">
+                    {countOf("overdue")} overdue
+                  </span>
+                )}
               </div>
             </div>
           </div>
@@ -323,14 +270,25 @@ export default function WorkerDashboard({ user, profile }: Props) {
             <div className="absolute -right-10 -top-10 h-40 w-40 rounded-full bg-white/10" />
             <div className="absolute -bottom-12 right-16 h-28 w-28 rounded-full bg-white/10" />
             <p className="text-xs uppercase tracking-wider text-indigo-200">Up next</p>
-            <h3 className="mt-1 text-xl font-semibold">Demo Patient C · Immunisation</h3>
-            <p className="mt-1 text-sm text-indigo-100">2:15 PM · Ward 7 · 3 doses scheduled</p>
+            {nextVisit ? (
+              <>
+                <h3 className="mt-1 text-xl font-semibold">
+                  {nextVisit.patientName} · {nextVisit.type}
+                </h3>
+                <p className="mt-1 text-sm text-indigo-100">
+                  {formatTime(nextVisit.scheduledAt.toDate())} · {nextVisit.ward} · {nextVisit.durationMin} min
+                </p>
+              </>
+            ) : (
+              <h3 className="mt-1 text-xl font-semibold">No visits left today</h3>
+            )}
             <div className="mt-5 flex flex-wrap gap-2">
-              <button className="rounded-lg bg-white px-4 py-2 text-sm font-semibold text-indigo-700 active:scale-95">
-                Start visit
-              </button>
-              <button className="rounded-lg border border-white/30 px-4 py-2 text-sm font-medium text-white hover:bg-white/10">
-                View details
+              <button
+                type="button"
+                onClick={() => setModal("visit")}
+                className="rounded-lg bg-white px-4 py-2 text-sm font-semibold text-indigo-700 active:scale-95"
+              >
+                Schedule visit
               </button>
             </div>
           </div>
@@ -340,7 +298,9 @@ export default function WorkerDashboard({ user, profile }: Props) {
         <section className="grid grid-cols-4 gap-3">
           {QUICK_ACTIONS.map((action) => (
             <button
-              key={action.label}
+              key={action.key}
+              type="button"
+              onClick={() => setModal(action.key)}
               className="flex flex-col items-center gap-2 rounded-2xl bg-white p-3 shadow-sm ring-1 ring-gray-200 hover:ring-indigo-300 active:scale-95"
             >
               <span className="flex h-10 w-10 items-center justify-center rounded-full bg-indigo-50 text-lg font-semibold text-indigo-600">
@@ -351,31 +311,13 @@ export default function WorkerDashboard({ user, profile }: Props) {
           ))}
         </section>
 
-        {/* Stat cards with sparklines */}
+        {/* Stat cards */}
         <section className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-          {STATS.map((item) => {
+          {SUMMARY.map((item) => {
             const tone = TONES[item.tone];
-            const positive = item.change > 0;
-            const neutral = item.change === 0;
             return (
-              <div
-                key={item.label}
-                className="flex flex-col gap-2 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-gray-200"
-              >
-                <div className="flex items-start justify-between">
-                  <p className="text-xs font-medium text-gray-500 sm:text-sm">{item.label}</p>
-                  <span
-                    className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-                      neutral
-                        ? "bg-gray-100 text-gray-600"
-                        : positive
-                          ? "bg-emerald-50 text-emerald-700"
-                          : "bg-rose-50 text-rose-700"
-                    }`}
-                  >
-                    {neutral ? "No change" : `${positive ? "+" : ""}${item.change}`}
-                  </span>
-                </div>
+              <div key={item.label} className="flex flex-col gap-2 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-gray-200">
+                <p className="text-xs font-medium text-gray-500 sm:text-sm">{item.label}</p>
                 <p className={`text-3xl font-bold ${tone.text}`}>{item.value}</p>
                 <Sparkline data={item.trend} stroke={tone.stroke} />
               </div>
@@ -383,52 +325,23 @@ export default function WorkerDashboard({ user, profile }: Props) {
           })}
         </section>
 
-        {/* Analytics chart */}
+        {/* Analytics */}
         <section className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-gray-200">
-          <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center justify-between">
             <div>
               <h2 className="font-semibold text-gray-900">Visit analytics</h2>
-              <p className="text-sm text-gray-500">
-                {totalVisits} visits {period === "week" ? "this week" : "this month"} (dummy)
-              </p>
+              <p className="text-sm text-gray-500">This week (dummy trend)</p>
             </div>
-            <div className="inline-flex rounded-lg bg-gray-100 p-1 text-sm">
-              {(["week", "month"] as const).map((p) => (
-                <button
-                  key={p}
-                  onClick={() => setPeriod(p)}
-                  className={`rounded-md px-3 py-1.5 font-medium capitalize transition ${
-                    period === p ? "bg-white text-gray-900 shadow-sm" : "text-gray-500"
-                  }`}
-                >
-                  {p}
-                </button>
-              ))}
-            </div>
+            <button
+              type="button"
+              onClick={() => setModal("report")}
+              className="text-sm font-medium text-indigo-600 hover:text-indigo-700"
+            >
+              Full report
+            </button>
           </div>
-
-          <div className="mt-6 flex h-48 items-end gap-2 sm:gap-4">
-            {chartData.map((d) => {
-              const visitH = (d.visits / chartMax) * 100;
-              const targetH = (d.target / chartMax) * 100;
-              return (
-                <div key={d.day} className="flex h-full flex-1 flex-col items-center gap-2">
-                  <div className="relative flex w-full flex-1 items-end justify-center">
-                    <div
-                      className="absolute bottom-0 w-full max-w-[36px] rounded-t-md border-2 border-dashed border-gray-300"
-                      style={{ height: `${targetH}%` }}
-                      aria-hidden
-                    />
-                    <div
-                      className="relative w-full max-w-[36px] rounded-t-md bg-indigo-500 transition-all duration-500"
-                      style={{ height: `${visitH}%` }}
-                      title={`${d.visits} visits`}
-                    />
-                  </div>
-                  <span className="text-xs text-gray-500">{d.day}</span>
-                </div>
-              );
-            })}
+          <div className="mt-6">
+            <TrendChart visits={TREND.Visits} target={TREND.Target} />
           </div>
           <div className="mt-4 flex items-center gap-4 text-xs text-gray-500">
             <span className="flex items-center gap-1.5">
@@ -468,18 +381,13 @@ export default function WorkerDashboard({ user, profile }: Props) {
             <div className="mb-4 flex items-center justify-between">
               <div>
                 <h2 className="font-semibold text-gray-900">Alerts</h2>
-                <p className="text-sm text-gray-500">Needs your attention</p>
+                <p className="text-sm text-gray-500">Needs your attention (dummy)</p>
               </div>
-              <span className="rounded-full bg-rose-500 px-2.5 py-1 text-xs font-semibold text-white">
-                {ALERTS.length}
-              </span>
+              <span className="rounded-full bg-rose-500 px-2.5 py-1 text-xs font-semibold text-white">{ALERTS.length}</span>
             </div>
             <ul className="space-y-3">
               {ALERTS.map((alert) => (
-                <li
-                  key={alert.title}
-                  className={`flex gap-3 rounded-xl p-3 ${TONES[alert.tone].bg}`}
-                >
+                <li key={alert.title} className={`flex gap-3 rounded-xl p-3 ${TONES[alert.tone].bg}`}>
                   <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${TONES[alert.tone].bar}`} />
                   <div className="min-w-0">
                     <p className="text-sm font-medium text-gray-900">{alert.title}</p>
@@ -491,37 +399,40 @@ export default function WorkerDashboard({ user, profile }: Props) {
           </section>
         </div>
 
-        {/* Schedule timeline */}
+        {/* Live schedule */}
         <section className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-gray-200">
           <div className="mb-5 flex items-center justify-between">
             <div>
               <h2 className="font-semibold text-gray-900">Today&apos;s schedule</h2>
-              <p className="text-sm text-gray-500">{SCHEDULE.length} visits planned (dummy)</p>
+              <p className="text-sm text-gray-500">{todayTotal} visits planned</p>
             </div>
-            <button className="text-sm font-medium text-indigo-600 hover:text-indigo-700">
+            <button
+              type="button"
+              onClick={() => router.push("/schedule")}
+              className="text-sm font-medium text-indigo-600 hover:text-indigo-700"
+            >
               See all
             </button>
           </div>
           <ol className="relative space-y-5 border-l-2 border-gray-100 pl-6">
-            {SCHEDULE.map((s) => {
-              const style = STATUS_STYLE[s.status];
+            {loading && <li className="text-sm text-gray-500">Loading visits…</li>}
+            {!loading && visits.length === 0 && <li className="text-sm text-gray-500">No visits planned today.</li>}
+            {visits.map((v) => {
+              const status = displayStatus(v, now);
+              const style = STATUS_STYLE[status];
               return (
-                <li key={s.name + s.time} className="relative">
-                  <span
-                    className={`absolute -left-[31px] top-1.5 h-3 w-3 rounded-full ring-4 ring-white ${style.dot}`}
-                  />
+                <li key={v.id} className="relative">
+                  <span className={`absolute -left-[31px] top-1.5 h-3 w-3 rounded-full ring-4 ring-white ${style.dot}`} />
                   <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
                     <div className="min-w-0">
                       <p className="truncate text-sm font-semibold text-gray-900">
-                        {s.name} · {s.type}
+                        {v.patientName} · {v.type}
                       </p>
                       <p className="text-xs text-gray-500">
-                        {s.time} · {s.village}
+                        {formatTime(v.scheduledAt.toDate())} · {v.ward}
                       </p>
                     </div>
-                    <span
-                      className={`w-fit shrink-0 rounded-full px-2.5 py-1 text-xs font-medium ${style.chip}`}
-                    >
+                    <span className={`w-fit shrink-0 rounded-full px-2.5 py-1 text-xs font-medium ${style.chip}`}>
                       {style.label}
                     </span>
                   </div>
@@ -530,32 +441,38 @@ export default function WorkerDashboard({ user, profile }: Props) {
             })}
           </ol>
         </section>
-
-        {/* Footer note */}
-        <p className="pb-4 text-center text-xs text-gray-400">
-          All patient names and figures on this screen are dummy data for demonstration.
-        </p>
       </main>
 
       {/* Mobile bottom nav */}
       <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-gray-200 bg-white/95 backdrop-blur md:hidden">
         <ul className="grid grid-cols-4">
-          {NAV.map((item) => (
+          {[
+            { label: "Home", href: "/dashboard", active: true },
+            { label: "Patients", href: "/patients", active: false },
+            { label: "Schedule", href: "/schedule", active: false },
+            { label: "Profile", href: "/profile", active: false },
+          ].map((item) => (
             <li key={item.label}>
               <button
+                type="button"
+                onClick={() => router.push(item.href)}
                 className={`flex w-full flex-col items-center gap-1 py-3 text-xs font-medium ${
                   item.active ? "text-indigo-600" : "text-gray-500"
                 }`}
               >
-                <span
-                  className={`h-1 w-6 rounded-full ${item.active ? "bg-indigo-600" : "bg-transparent"}`}
-                />
+                <span className={`h-1 w-6 rounded-full ${item.active ? "bg-indigo-600" : "bg-transparent"}`} />
                 {item.label}
               </button>
             </li>
           ))}
         </ul>
       </nav>
+
+      {/* Modals */}
+      <NewVisitModal open={modal === "visit"} onClose={closeModal} />
+      <AddRecordModal open={modal === "record"} onClose={closeModal} />
+      <ReportModal open={modal === "report"} onClose={closeModal} />
+      <ScanIdModal open={modal === "scan"} onClose={closeModal} />
     </div>
   );
 }
